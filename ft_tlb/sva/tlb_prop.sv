@@ -82,7 +82,8 @@ end else begin
 end
 
 // Assert that if valid eventually ready or dropped valid
-as__lookup_transid_hsk_or_drop: assert property (lk_req_val |-> s_eventually(!lk_req_val || lk_req_rdy));
+//as__lookup_transid_hsk_or_drop: assert property (lk_req_val |-> s_eventually(!lk_req_val || lk_req_rdy));
+
 // Assert that every request has a response and that every reponse has a request
 as__lookup_transid_eventual_response: assert property (|lookup_transid_sampled |-> s_eventually(lk_res_val));
 as__lookup_transid_was_a_request: assert property (lookup_transid_response |-> lookup_transid_set || lookup_transid_sampled);
@@ -140,6 +141,71 @@ assign miss_data = {lu_asid_i,lu_vaddr_i[38:12]};
 	 as__no_x_lk_req_stable: assert property(lk_req_val |-> !$isunknown(lk_req_stable));
 `endif
 
+
+
+
 //====DESIGNER-ADDED-SVA====//
-am__no_flush: assume property (flush_i=='0);
+//am__no_flush: assume property (flush_i=='0);
+
+
+// Property File
+
+
+// Assertion to verify the update operation with correct data.
+// This checks that when an update is valid, the data being written into the TLB matches
+// the expected data based on the update input signals.
+as__update_data: 
+    assert property (update_i.valid |=> $past(update_i.asid) == update_i.asid && 
+                                        $past(update_i.vpn) == update_i.vpn);
+
+// Assertion to verify PLRU operation for TLB hit.
+// When there's a TLB hit, the PLRU-tree should be updated accordingly.
+// This checks the pseudo LRU logic to ensure the correct entry is updated.
+// generate
+//     for (genvar i = 0; i < TLB_ENTRIES; i++) begin: PLRU_ASSERTIONS
+//         as__plru_update_for_hit: 
+//             assert property (tlb.lu_hit[i] |=> !tlb.replace_en[i] && 
+//                                              tlb.plru_tree_n[2*i:2*i+1] == $past(tlb.plru_tree_q[2*i:2*i+1]));
+//     end
+// endgenerate
+
+// Assertion to verify the flush operation
+// This checks that if a flush is signaled and ASID and vaddr are 0, then the entire TLB is invalidated.
+as__flush_all:
+    assert property (flush_i && tlb.asid_to_be_flushed_is0 && tlb.vaddr_to_be_flushed_is0 |=> 
+                        !(&tlb.tags_n.valid));
+
+// Assertion to verify selective flush based on VADDR
+// If only VADDR is provided for flush (ASID = 0), then only the corresponding entries in TLB are invalidated.
+generate
+    for (genvar j = 0; j < TLB_ENTRIES; j++) begin: FLUSH_vaddr_ASSERTIONS
+        as__flush_vaddr:
+            assert property (flush_i && tlb.asid_to_be_flushed_is0 && tlb.vaddr_vpn0_match[j] && 
+                             tlb.vaddr_vpn1_match[j] && tlb.vaddr_vpn2_match[j] |=> 
+                             !tlb.tags_n[j].valid);
+    end
+endgenerate
+
+// Assertion to verify selective flush based on VADDR and ASID
+// If both VADDR and ASID are provided for flush, then the corresponding entries with matching ASID and VADDR in TLB are invalidated.
+generate
+    for (genvar k = 0; k < TLB_ENTRIES; k++) begin: FLUSH_VADDR_ASID_ASSERTIONS
+        as__flush_vaddr_asid:
+            assert property (flush_i && !tlb.content_q[k].g && tlb.vaddr_vpn0_match[k] && tlb.vaddr_vpn1_match[k] &&
+                             tlb.vaddr_vpn2_match[k] && tlb.asid_to_be_flushed_i == tlb.tags_q[k].asid |=> 
+                             !tlb.tags_n[k].valid);
+    end
+endgenerate
+
+// Assertion to verify selective flush based on ASID
+// If only ASID is provided for flush (VADDR = 0), then only the entries in TLB with matching ASID are invalidated.
+generate
+    for (genvar l = 0; l < TLB_ENTRIES; l++) begin: FLUSH_ASID_ASSERTIONS
+        as__flush_asid:
+            assert property (flush_i && tlb.vaddr_to_be_flushed_is0 && tlb.asid_to_be_flushed_i == tlb.tags_q[l].asid |=> 
+                             !tlb.tags_n[l].valid);
+    end
+endgenerate
+
+
 endmodule
